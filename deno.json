@@ -1,25 +1,10 @@
 {
-  "name": "@wyattjoh/imessage-mcp",
-  "version": "0.2.0",
-  "license": "MIT",
-  "exports": "./src/index.ts",
-  "publish": {
-    "include": ["LICENSE", "README.md", "src/**/*.ts", "deno.json"],
-    "exclude": ["tests/"]
-  },
+  "workspace": ["packages/imessage", "packages/imessage-mcp"],
   "tasks": {
-    "dev": "deno run --allow-read --allow-env --allow-sys --allow-ffi --watch src/index.ts",
-    "start": "deno run --allow-read --allow-env --allow-sys --allow-ffi src/index.ts",
-    "check": "deno check **/*.ts",
+    "check": "deno check",
     "fmt": "deno fmt",
     "lint": "deno lint",
-    "build": "deno compile --allow-sys --allow-read --allow-write --allow-env --allow-net --allow-ffi --output=imessage-mcp src/index.ts",
     "test": "deno test --allow-net"
-  },
-  "imports": {
-    "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@^1.0.0",
-    "zod": "npm:zod@^3.22.0",
-    "@db/sqlite": "jsr:@db/sqlite@0.12.0"
   },
   "compilerOptions": {
     "strict": true,
@@ -39,7 +24,7 @@
     "proseWrap": "preserve"
   },
   "lint": {
-    "include": ["src/"],
+    "include": ["packages/"],
     "rules": {
       "tags": ["recommended"]
     }

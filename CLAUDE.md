@@ -4,55 +4,83 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
+This is a Deno workspace monorepo with two packages:
+
+- `packages/imessage` - Core library for iMessage database access
+- `packages/imessage-mcp` - MCP server implementation
+
+### Root Commands (affects all packages)
+
 ```bash
-# Install/cache dependencies
-deno cache src/index.ts
+# Cache dependencies for all packages
+deno cache packages/*/mod.ts
 
-# Run the MCP server
-deno task start
-# Or directly: deno run --allow-all src/index.ts
-
-# Development (with file watching)
-deno task dev
-
-# Code quality
-deno task fmt     # Format code
-deno task lint    # Lint code
+# Code quality (runs on all packages)
+deno task fmt     # Format all code
+deno task lint    # Lint all packages
 deno task check   # Type check all TypeScript files
-
-# Build standalone binary
-deno task build   # Creates executable at ./imessage-mcp
 
 # Run tests
 deno task test
+
+# Publish packages to JSR (CI/CD)
+deno publish
+```
+
+### Package-Specific Commands
+
+```bash
+# Run the MCP server
+cd packages/imessage-mcp
+deno run --allow-read --allow-env --allow-sys --allow-ffi mod.ts
+
+# Development with file watching
+cd packages/imessage-mcp
+deno run --allow-read --allow-env --allow-sys --allow-ffi --watch mod.ts
+
+# Test the core library
+cd packages/imessage
+deno test --allow-read --allow-env --allow-ffi
 ```
 
 ## Architecture Overview
 
-This is a Model Context Protocol (MCP) server that provides read-only access to the macOS iMessage database. The codebase follows functional programming principles with no classes.
+This monorepo contains a Model Context Protocol (MCP) server and core library that provide read-only access to the macOS iMessage database. The codebase follows functional programming principles with no classes.
+
+### Package Structure
+
+1. **@wyattjoh/imessage** (`packages/imessage/`)
+   - Core library for iMessage database access
+   - Database operations, type definitions, and utilities
+   - No MCP dependencies - can be used standalone
+
+2. **@wyattjoh/imessage-mcp** (`packages/imessage-mcp/`)
+   - MCP server implementation
+   - Imports and uses the core library
+   - Provides LLM-accessible tools
 
 ### Core Components
 
-1. **MCP Server Layer** (`src/index.ts`)
+1. **MCP Server Layer** (`packages/imessage-mcp/src/index.ts`)
    - Creates MCP server instance using `@modelcontextprotocol/sdk`
    - Defines 6 tools with Zod schemas for validation
    - Uses StdioServerTransport for communication
    - Lazy database initialization pattern
 
-2. **Messages Database Layer** (`src/messages.ts`)
+2. **Messages Database Layer** (`packages/imessage/src/messages.ts`)
    - Pure functions for all database operations
    - Direct SQLite access to `~/Library/Messages/chat.db`
    - Handles Apple's timestamp format (Core Data epoch: nanoseconds since 2001-01-01)
    - All queries are read-only with parameterized SQL
    - Implements pagination with metadata for all queries
 
-3. **Contacts Integration** (`src/contacts.ts`)
+3. **Contacts Integration** (`packages/imessage/src/contacts.ts`)
    - Direct SQLite access to `~/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb`
    - Searches multiple AddressBook databases for comprehensive results
    - Phone number normalization (adds +1 prefix for 10-digit US numbers)
    - Returns both phone numbers and email addresses as potential iMessage handles
 
-4. **Type System** (`src/types.ts`)
+4. **Type System** (`packages/imessage/src/types.ts`)
    - Interfaces matching iMessage database schema
    - `MessageWithHandle` extends `Message` with denormalized handle data
    - All nullable fields use `T | undefined` pattern

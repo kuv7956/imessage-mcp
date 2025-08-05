@@ -10,6 +10,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
+ * Converts an Apple timestamp (nanoseconds since 2001-01-01) to a JavaScript timestamp
+ * @param appleTimestamp - Timestamp in Apple's format (nanoseconds since 2001-01-01)
+ * @returns JavaScript timestamp (milliseconds since 1970-01-01)
+ */
+export const convertAppleTimestamp = (appleTimestamp: number): number => {
+  // 978307200 is the number of seconds between 1970-01-01 and 2001-01-01
+  return appleTimestamp / 1000000000 + 978307200;
+};
+
+/**
  * Decodes NSAttributedString data from the attributedBody field
  * Uses pattern matching approach to extract plain text
  */
@@ -82,7 +92,7 @@ const createPaginationMetadata = (
 };
 
 export const searchMessages = (
-  db: Database,
+  messagesDatabase: Database,
   options: SearchOptions = {},
 ): PaginatedResult<MessageWithHandle> => {
   const {
@@ -126,7 +136,7 @@ export const searchMessages = (
     LEFT JOIN handle h ON m.handle_id = h.ROWID
     ${whereClause}
   `;
-  const countStmt = db.prepare(countSql);
+  const countStmt = messagesDatabase.prepare(countSql);
   const { total } = countStmt.get(...params) as { total: number };
 
   // Get paginated data
@@ -155,7 +165,7 @@ export const searchMessages = (
     ORDER BY m.date DESC LIMIT ? OFFSET ?
   `;
 
-  const dataStmt = db.prepare(dataSql);
+  const dataStmt = messagesDatabase.prepare(dataSql);
   interface RawMessageRow extends MessageWithHandle {
     attributedBody?: Uint8Array | null;
   }
@@ -180,21 +190,21 @@ export const searchMessages = (
 };
 
 export const getRecentMessages = (
-  db: Database,
+  messagesDatabase: Database,
   limit = 20,
   offset = 0,
 ): PaginatedResult<MessageWithHandle> => {
-  return searchMessages(db, { limit, offset });
+  return searchMessages(messagesDatabase, { limit, offset });
 };
 
 export const getChats = (
-  db: Database,
+  messagesDatabase: Database,
   limit = 50,
   offset = 0,
 ): PaginatedResult<Chat> => {
   // Count total chats
   const countSql = "SELECT COUNT(*) as total FROM chat";
-  const countStmt = db.prepare(countSql);
+  const countStmt = messagesDatabase.prepare(countSql);
   const { total } = countStmt.get() as { total: number };
 
   // Get paginated data
@@ -215,7 +225,7 @@ export const getChats = (
     LIMIT ? OFFSET ?
   `;
 
-  const dataStmt = db.prepare(dataSql);
+  const dataStmt = messagesDatabase.prepare(dataSql);
   const data = dataStmt.all(limit, offset) as Chat[];
 
   return {
@@ -225,13 +235,13 @@ export const getChats = (
 };
 
 export const getHandles = (
-  db: Database,
+  messagesDatabase: Database,
   limit = 100,
   offset = 0,
 ): PaginatedResult<Handle> => {
   // Count total handles
   const countSql = "SELECT COUNT(*) as total FROM handle";
-  const countStmt = db.prepare(countSql);
+  const countStmt = messagesDatabase.prepare(countSql);
   const { total } = countStmt.get() as { total: number };
 
   // Get paginated data
@@ -247,7 +257,7 @@ export const getHandles = (
     LIMIT ? OFFSET ?
   `;
 
-  const dataStmt = db.prepare(dataSql);
+  const dataStmt = messagesDatabase.prepare(dataSql);
   const data = dataStmt.all(limit, offset) as Handle[];
 
   return {
@@ -257,7 +267,7 @@ export const getHandles = (
 };
 
 export const getMessagesFromChat = (
-  db: Database,
+  messagesDatabase: Database,
   chatGuid: string,
   limit = 50,
   offset = 0,
@@ -270,7 +280,7 @@ export const getMessagesFromChat = (
     JOIN chat c ON cmj.chat_id = c.ROWID
     WHERE c.guid = ?
   `;
-  const countStmt = db.prepare(countSql);
+  const countStmt = messagesDatabase.prepare(countSql);
   const { total } = countStmt.get(chatGuid) as { total: number };
 
   // Get paginated data
@@ -302,7 +312,7 @@ export const getMessagesFromChat = (
     LIMIT ? OFFSET ?
   `;
 
-  const dataStmt = db.prepare(dataSql);
+  const dataStmt = messagesDatabase.prepare(dataSql);
   interface RawMessageRow extends MessageWithHandle {
     attributedBody?: Uint8Array | null;
   }

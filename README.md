@@ -1,6 +1,9 @@
-# iMessage MCP Server
+# iMessage MCP
 
-A Model Context Protocol (MCP) server for reading iMessage data from macOS. This server provides tools to search and retrieve messages, chats, and contacts from the local iMessage database.
+A Deno monorepo containing packages for iMessage access on macOS:
+
+- **[@wyattjoh/imessage](packages/imessage)** - Core library for read-only iMessage database access
+- **[@wyattjoh/imessage-mcp](packages/imessage-mcp)** - Model Context Protocol (MCP) server for LLM integration
 
 ## Features
 
@@ -11,18 +14,36 @@ A Model Context Protocol (MCP) server for reading iMessage data from macOS. This
 - Retrieve messages from specific chats
 - Search macOS Contacts by name with iMessage handle ID correlation
 
-## Prerequisites
+## Requirements
 
 - macOS (iMessage is only available on macOS)
-- Deno runtime
+- Deno 2.x or later
 - Read access to `~/Library/Messages/chat.db`
 - Read access to `~/Library/Application Support/AddressBook/` (for contacts search)
 
-## Installation
+## Packages
 
-### Option 1: Using JSR (Recommended)
+### @wyattjoh/imessage
 
-You can run the MCP server directly from JSR without cloning the repository:
+Core library for accessing iMessage data:
+
+```bash
+deno add @wyattjoh/imessage
+```
+
+```typescript
+import { openMessagesDatabase, searchMessages } from "@wyattjoh/imessage";
+
+const db = await openMessagesDatabase();
+const results = await searchMessages(db, { query: "hello" });
+db.close();
+```
+
+[See full documentation](packages/imessage/README.md)
+
+### @wyattjoh/imessage-mcp
+
+MCP server for LLM integration:
 
 ```bash
 # Run directly from JSR
@@ -173,21 +194,46 @@ This metadata helps you:
 
 ## Development
 
-```bash
-# Run in watch mode
-deno task dev
+This is a Deno workspace monorepo. All commands run from the root affect all packages.
 
-# Format code
+```bash
+# Clone the repository
+git clone https://github.com/wyattjoh/imessage-mcp.git
+cd imessage-mcp
+
+# Cache dependencies
+deno cache packages/*/mod.ts
+
+# Format all code
 deno task fmt
 
-# Lint code
+# Lint all packages
 deno task lint
 
-# Type check
+# Type check all packages
 deno task check
 
-# Build standalone binary
-deno task build
+# Run tests
+deno task test
+
+# Run MCP server locally
+cd packages/imessage-mcp
+deno run --allow-read --allow-env --allow-sys --allow-ffi mod.ts
+
+# Publish packages (CI/CD)
+deno publish
+```
+
+### Working on Individual Packages
+
+```bash
+# Work on @wyattjoh/imessage
+cd packages/imessage
+deno test --allow-read --allow-env --allow-ffi
+
+# Work on @wyattjoh/imessage-mcp
+cd packages/imessage-mcp
+deno run --allow-read --allow-env --allow-sys --allow-ffi mod.ts
 ```
 
 ## License

@@ -32,5 +32,5 @@ jobs:
       - name: Type check
         run: deno task check
 
-      - name: Publish to JSR
+      - name: Publish packages to JSR
         run: deno publish

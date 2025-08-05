@@ -1,12 +1,7 @@
 import { Database } from "@db/sqlite";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { PaginatedResult } from "./types.ts";
-
-export interface ContactInfo {
-  name: string;
-  phone: string;
-}
+import type { ContactInfo, PaginatedResult } from "./types.ts";
 
 interface Contact {
   id: number;
@@ -34,9 +29,60 @@ interface EmailRow {
 }
 
 /**
+ * Open all available AddressBook databases and return database objects
+ */
+export function openContactsDatabases(): Database[] {
+  const databases: Database[] = [];
+  const addressBookBasePath = join(
+    homedir(),
+    "Library",
+    "Application Support",
+    "AddressBook",
+    "Sources",
+  );
+
+  try {
+    // Find all AddressBook database files
+    const sourcesDirs = [];
+    for (const entry of Deno.readDirSync(addressBookBasePath)) {
+      if (entry.isDirectory) {
+        sourcesDirs.push(entry.name);
+      }
+    }
+
+    // Open each AddressBook database
+    for (const sourceDir of sourcesDirs) {
+      const dbPath = join(
+        addressBookBasePath,
+        sourceDir,
+        "AddressBook-v22.abcddb",
+      );
+
+      try {
+        if (!Deno.statSync(dbPath).isFile) {
+          continue;
+        }
+      } catch {
+        // Database file doesn't exist
+        continue;
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      databases.push(db);
+    }
+
+    return databases;
+  } catch (error) {
+    console.error("Error opening AddressBook databases:", error);
+    return databases;
+  }
+}
+
+/**
  * Search for contacts by name using AddressBook database and return phone numbers as handles
  */
 export function searchContactsByName(
+  contactsDatabases: Database[],
   firstName: string,
   lastName: string | undefined,
   limit = 50,
@@ -45,6 +91,7 @@ export function searchContactsByName(
   try {
     // First get all contacts matching the search term to count total results
     const allContacts = searchContactsInAddressBook(
+      contactsDatabases,
       firstName,
       lastName,
       1000,
@@ -130,47 +177,17 @@ function normalizePhoneNumber(phone: string): string {
 }
 
 function searchContactsInAddressBook(
+  contactsDatabases: Database[],
   firstName: string,
   lastName: string | undefined,
   limit = 20,
   offset = 0,
 ): Contact[] {
   const contacts: Contact[] = [];
-  const addressBookBasePath = join(
-    homedir(),
-    "Library",
-    "Application Support",
-    "AddressBook",
-    "Sources",
-  );
 
   try {
-    // Find all AddressBook database files
-    const sourcesDirs = [];
-    for (const entry of Deno.readDirSync(addressBookBasePath)) {
-      if (entry.isDirectory) {
-        sourcesDirs.push(entry.name);
-      }
-    }
-
     // Search in each AddressBook database
-    for (const sourceDir of sourcesDirs) {
-      const dbPath = join(
-        addressBookBasePath,
-        sourceDir,
-        "AddressBook-v22.abcddb",
-      );
-
-      try {
-        if (!Deno.statSync(dbPath).isFile) {
-          continue;
-        }
-      } catch {
-        // Database file doesn't exist
-        continue;
-      }
-
-      const db = new Database(dbPath, { readonly: true });
+    for (const db of contactsDatabases) {
       try {
         // Query for contacts matching the search term
         let contactRows: unknown[];
@@ -285,8 +302,9 @@ function searchContactsInAddressBook(
 
           contacts.push(contact);
         }
-      } finally {
-        db.close();
+      } catch (error) {
+        console.error("Error searching in database:", error);
+        // Continue with other databases
       }
     }
 

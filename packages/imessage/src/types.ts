@@ -69,3 +69,8 @@ export interface PaginatedResult<T> {
   data: T[];
   pagination: PaginationMetadata;
 }
+
+export interface ContactInfo {
+  name: string;
+  phone: string;
+}

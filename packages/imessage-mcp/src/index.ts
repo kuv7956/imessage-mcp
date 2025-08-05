@@ -8,12 +8,12 @@ import {
   getHandles,
   getMessagesFromChat,
   getRecentMessages,
+  openContactsDatabases,
   openMessagesDatabase,
+  searchContactsByName,
   searchMessages,
-} from "./messages.ts";
-import { searchContactsByName } from "./contacts.ts";
+} from "@wyattjoh/imessage";
 import deno from "../deno.json" with { type: "json" };
-import { Database } from "@db/sqlite";
 
 const SearchMessagesSchema = z.object({
   query: z
@@ -150,14 +150,8 @@ const createServer = () => {
     },
   });
 
-  let db: Database | undefined;
-
-  const ensureDatabase = (): Database => {
-    if (!db) {
-      db = openMessagesDatabase();
-    }
-    return db;
-  };
+  const messagesDatabase = openMessagesDatabase();
+  const contactsDatabases = openContactsDatabases();
 
   server.tool(
     "search_messages",
@@ -165,7 +159,6 @@ const createServer = () => {
     SearchMessagesSchema.shape,
     (args) => {
       try {
-        const database = ensureDatabase();
         const options = {
           query: args.query,
           handle: args.handle,
@@ -175,7 +168,7 @@ const createServer = () => {
           offset: args.offset,
         };
 
-        const result = searchMessages(database, options);
+        const result = searchMessages(messagesDatabase, options);
 
         return {
           content: [
@@ -206,8 +199,11 @@ const createServer = () => {
     GetRecentMessagesSchema.shape,
     (args) => {
       try {
-        const database = ensureDatabase();
-        const result = getRecentMessages(database, args.limit, args.offset);
+        const result = getRecentMessages(
+          messagesDatabase,
+          args.limit,
+          args.offset,
+        );
 
         return {
           content: [
@@ -238,8 +234,7 @@ const createServer = () => {
     GetChatsSchema.shape,
     (args) => {
       try {
-        const database = ensureDatabase();
-        const result = getChats(database, args.limit, args.offset);
+        const result = getChats(messagesDatabase, args.limit, args.offset);
 
         return {
           content: [
@@ -270,8 +265,7 @@ const createServer = () => {
     GetHandlesSchema.shape,
     (args) => {
       try {
-        const database = ensureDatabase();
-        const result = getHandles(database, args.limit, args.offset);
+        const result = getHandles(messagesDatabase, args.limit, args.offset);
 
         return {
           content: [
@@ -302,9 +296,8 @@ const createServer = () => {
     GetMessagesFromChatSchema.shape,
     (args) => {
       try {
-        const database = ensureDatabase();
         const result = getMessagesFromChat(
-          database,
+          messagesDatabase,
           args.chatGuid,
           args.limit,
           args.offset,
@@ -340,6 +333,7 @@ const createServer = () => {
     (args) => {
       try {
         const result = searchContactsByName(
+          contactsDatabases,
           args.firstName,
           args.lastName,
           args.limit,
@@ -379,16 +373,16 @@ const main = async () => {
   // Attempt to access the database on startup to trigger security prompt
   try {
     console.error("Attempting to access iMessage database...");
-    const messages = openMessagesDatabase();
+    const messagesDatabase = openMessagesDatabase();
 
     // Perform a simple query to ensure actual database access
-    const handles = getHandles(messages);
+    const handles = getHandles(messagesDatabase);
     console.error(
       `Database access successful. Found ${handles.data.length} handles.`,
     );
 
     // Close the initial connection as it will be reopened lazily when needed
-    messages.close();
+    messagesDatabase.close();
   } catch (error) {
     console.error(
       "Database access failed:",
@@ -402,10 +396,19 @@ const main = async () => {
   // Test contacts functionality on startup
   try {
     console.error("Testing contacts database integration...");
-    const testContacts = searchContactsByName("test", undefined);
+    const contactsDatabases = openContactsDatabases();
+    const testContacts = searchContactsByName(
+      contactsDatabases,
+      "test",
+      undefined,
+    );
     console.error(
       `Contacts integration successful. Search test returned ${testContacts.data.length} results.`,
     );
+    // Close test databases
+    for (const db of contactsDatabases) {
+      db.close();
+    }
   } catch (error) {
     console.error(
       "Contacts integration test failed:",
