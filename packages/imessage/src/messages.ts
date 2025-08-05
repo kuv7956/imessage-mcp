@@ -20,8 +20,10 @@ export const convertAppleTimestamp = (appleTimestamp: number): number => {
 };
 
 /**
- * Decodes NSAttributedString data from the attributedBody field
- * Uses pattern matching approach to extract plain text
+ * Decodes NSAttributedString data from the attributedBody field.
+ * Uses pattern matching approach to extract plain text from binary NSAttributedString format.
+ * @param attributedBodyBlob - Binary data containing NSAttributedString
+ * @returns Extracted plain text string
  */
 export const decodeAttributedBody = (
   attributedBodyBlob: Uint8Array | null,
@@ -67,6 +69,10 @@ const getImessageDbPath = (): string => {
   return join(homedir(), "Library", "Messages", "chat.db");
 };
 
+/**
+ * Opens a read-only connection to the macOS Messages database.
+ * @returns Database instance for executing queries
+ */
 export const openMessagesDatabase = (): Database => {
   const dbPath = getImessageDbPath();
   return new Database(dbPath, { readonly: true });
@@ -91,6 +97,12 @@ const createPaginationMetadata = (
   };
 };
 
+/**
+ * Searches for messages with optional filtering by query text, contact handle, and date range.
+ * @param messagesDatabase - Database connection to use
+ * @param options - Search and filter options
+ * @returns Paginated results with message data and metadata
+ */
 export const searchMessages = (
   messagesDatabase: Database,
   options: SearchOptions = {},
@@ -189,6 +201,13 @@ export const searchMessages = (
   };
 };
 
+/**
+ * Gets the most recent messages across all conversations.
+ * @param messagesDatabase - Database connection to use
+ * @param limit - Maximum number of messages to return (default: 20)
+ * @param offset - Number of messages to skip for pagination (default: 0)
+ * @returns Paginated results with recent messages ordered by date
+ */
 export const getRecentMessages = (
   messagesDatabase: Database,
   limit = 20,
@@ -197,6 +216,13 @@ export const getRecentMessages = (
   return searchMessages(messagesDatabase, { limit, offset });
 };
 
+/**
+ * Gets all chat conversations ordered by most recent activity.
+ * @param messagesDatabase - Database connection to use
+ * @param limit - Maximum number of chats to return (default: 50)
+ * @param offset - Number of chats to skip for pagination (default: 0)
+ * @returns Paginated results with chat data and metadata
+ */
 export const getChats = (
   messagesDatabase: Database,
   limit = 50,
@@ -234,6 +260,13 @@ export const getChats = (
   };
 };
 
+/**
+ * Gets all contact handles (phone numbers and email addresses) from the database.
+ * @param messagesDatabase - Database connection to use
+ * @param limit - Maximum number of handles to return (default: 100)
+ * @param offset - Number of handles to skip for pagination (default: 0)
+ * @returns Paginated results with handle data and metadata
+ */
 export const getHandles = (
   messagesDatabase: Database,
   limit = 100,
@@ -266,6 +299,14 @@ export const getHandles = (
   };
 };
 
+/**
+ * Gets messages from a specific chat conversation identified by its GUID.
+ * @param messagesDatabase - Database connection to use
+ * @param chatGuid - Unique identifier of the chat
+ * @param limit - Maximum number of messages to return (default: 50)
+ * @param offset - Number of messages to skip for pagination (default: 0)
+ * @returns Paginated results with messages from the specified chat
+ */
 export const getMessagesFromChat = (
   messagesDatabase: Database,
   chatGuid: string,

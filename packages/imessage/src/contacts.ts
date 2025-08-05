@@ -29,7 +29,9 @@ interface EmailRow {
 }
 
 /**
- * Open all available AddressBook databases and return database objects
+ * Opens all available AddressBook databases on the system.
+ * Searches for AddressBook database files in the macOS AddressBook Sources directory.
+ * @returns Array of Database instances for each available AddressBook
  */
 export function openContactsDatabases(): Database[] {
   const databases: Database[] = [];
@@ -79,7 +81,14 @@ export function openContactsDatabases(): Database[] {
 }
 
 /**
- * Search for contacts by name using AddressBook database and return phone numbers as handles
+ * Searches for contacts by name in the macOS AddressBook and returns their phone numbers and email addresses.
+ * Phone numbers are normalized to match iMessage handle format (e.g., +1 prefix for US numbers).
+ * @param contactsDatabases - Array of AddressBook database connections
+ * @param firstName - First name to search for (searches across all name fields if lastName not provided)
+ * @param lastName - Optional last name for more specific search
+ * @param limit - Maximum number of results to return (default: 50)
+ * @param offset - Number of results to skip for pagination (default: 0)
+ * @returns Paginated results with contact names and their phone/email handles
  */
 export function searchContactsByName(
   contactsDatabases: Database[],
