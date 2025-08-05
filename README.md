@@ -16,6 +16,7 @@ A Model Context Protocol (MCP) server for reading iMessage data from macOS. This
 - macOS (iMessage is only available on macOS)
 - Deno runtime
 - Read access to `~/Library/Messages/chat.db`
+- Read access to `~/Library/Application Support/AddressBook/` (for contacts search)
 
 ## Installation
 
@@ -25,10 +26,10 @@ You can run the MCP server directly from JSR without cloning the repository:
 
 ```bash
 # Run directly from JSR
-deno run --allow-read --allow-env --allow-sys --allow-run --allow-ffi jsr:@wyattjoh/imessage-mcp
+deno run --allow-read --allow-env --allow-sys --allow-ffi jsr:@wyattjoh/imessage-mcp
 
 # Or install globally
-deno install --allow-read --allow-env --allow-sys --allow-run --allow-ffi -n imessage-mcp jsr:@wyattjoh/imessage-mcp
+deno install --global --allow-read --allow-env --allow-sys --allow-ffi -n imessage-mcp jsr:@wyattjoh/imessage-mcp
 ```
 
 For Claude Desktop app integration, add this to your `claude_desktop_config.json`:
@@ -43,7 +44,6 @@ For Claude Desktop app integration, add this to your `claude_desktop_config.json
         "--allow-read",
         "--allow-env",
         "--allow-sys",
-        "--allow-run",
         "--allow-ffi",
         "jsr:@wyattjoh/imessage-mcp"
       ]
@@ -61,7 +61,7 @@ For Claude Desktop app integration, add this to your `claude_desktop_config.json
    ```
 3. Run the server:
    ```bash
-   deno run --allow-read --allow-env --allow-sys --allow-run --allow-ffi src/index.ts
+   deno run --allow-read --allow-env --allow-sys --allow-ffi src/index.ts
    # Or use the task:
    deno task start
    ```
@@ -94,8 +94,12 @@ For Claude Desktop app integration, add this to your `claude_desktop_config.json
    - `offset` (optional): Pagination offset (default: 0)
 
 6. **search_contacts** - Search macOS Contacts by name and get phone numbers
-   - `name` (required): Contact name to search for (e.g., 'John Smith')
-   - Returns contact info with phone numbers that can be used as handle parameters
+   - `firstName` (required): First name to search for (e.g., 'John')
+   - `lastName` (optional): Last name to search for (e.g., 'Smith'). If omitted, searches across all name fields
+   - `limit` (optional): Maximum results (1-200, default: 50)
+   - `offset` (optional): Pagination offset (default: 0)
+   - Returns contact info with phone numbers and email addresses that can be used as handle parameters
+   - Searches directly in the macOS AddressBook database for better performance and reliability
 
 ### Pagination Examples
 
@@ -123,6 +127,14 @@ search_messages({
   query: "meeting",
   limit: 100,
   offset: 200,
+});
+
+// Search contacts with pagination
+search_contacts({
+  firstName: "John",
+  lastName: "Smith",
+  limit: 50,
+  offset: 0,
 });
 ```
 

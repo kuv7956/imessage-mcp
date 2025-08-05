@@ -29,33 +29,44 @@ deno task test
 
 ## Architecture Overview
 
-This is a Model Context Protocol (MCP) server that provides read-only access to the macOS iMessage database. The codebase follows functional programming principles with no classes. It's implemented in a functional programming style.
+This is a Model Context Protocol (MCP) server that provides read-only access to the macOS iMessage database. The codebase follows functional programming principles with no classes.
 
 ### Core Components
 
 1. **MCP Server Layer** (`src/index.ts`)
    - Creates MCP server instance using `@modelcontextprotocol/sdk`
-   - Defines 5 tools with Zod schemas for validation
+   - Defines 6 tools with Zod schemas for validation
    - Uses StdioServerTransport for communication
    - Lazy database initialization pattern
 
-2. **Database Layer** (`src/database.ts`)
+2. **Messages Database Layer** (`src/messages.ts`)
    - Pure functions for all database operations
    - Direct SQLite access to `~/Library/Messages/chat.db`
-   - Handles Apple's timestamp format (Core Data epoch: seconds since 2001-01-01)
+   - Handles Apple's timestamp format (Core Data epoch: nanoseconds since 2001-01-01)
    - All queries are read-only with parameterized SQL
+   - Implements pagination with metadata for all queries
 
-3. **Type System** (`src/types.ts`)
+3. **Contacts Integration** (`src/contacts.ts`)
+   - Direct SQLite access to `~/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb`
+   - Searches multiple AddressBook databases for comprehensive results
+   - Phone number normalization (adds +1 prefix for 10-digit US numbers)
+   - Returns both phone numbers and email addresses as potential iMessage handles
+
+4. **Type System** (`src/types.ts`)
    - Interfaces matching iMessage database schema
    - `MessageWithHandle` extends `Message` with denormalized handle data
    - All nullable fields use `T | undefined` pattern
+   - `PaginatedResult<T>` wrapper for all paginated responses
 
 ### Key Technical Details
 
 - **Timestamp Conversion**: Apple stores timestamps as nanoseconds since 2001-01-01. Conversion formula: `date/1000000000 + 978307200`
-- **Database Path**: Hard-coded to `~/Library/Messages/chat.db` (macOS only)
+- **Database Paths**:
+  - Messages: `~/Library/Messages/chat.db`
+  - Contacts: `~/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb`
 - **Functional Patterns**: All database functions are pure, taking `Database` as first parameter
 - **Error Handling**: Try-catch blocks in MCP tool handlers return error messages as text content
+- **Pagination**: All tools support limit/offset pagination and return hasMore flag for complete data retrieval
 
 ### MCP Tools
 
@@ -64,6 +75,11 @@ This is a Model Context Protocol (MCP) server that provides read-only access to 
 3. `get_chats` - List conversations ordered by last activity
 4. `get_handles` - All contacts/phone numbers
 5. `get_messages_from_chat` - Messages from specific chat GUID
+6. `search_contacts` - Search macOS Contacts by name, returns phone/email handles
+
+### Important Pagination Note
+
+All tools return paginated results. When performing analysis or summaries, ALWAYS check the `hasMore` field in the pagination metadata and continue fetching until `hasMore` is false to ensure complete data.
 
 ## iMessage Database Schema Notes
 

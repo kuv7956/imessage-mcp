@@ -9,11 +9,55 @@ import type {
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+/**
+ * Decodes NSAttributedString data from the attributedBody field
+ * Uses pattern matching approach to extract plain text
+ */
+export const decodeAttributedBody = (
+  attributedBodyBlob: Uint8Array | null,
+): string => {
+  if (!attributedBodyBlob) return "";
+
+  try {
+    // Decode binary data to UTF-8 string
+    const decoder = new TextDecoder("utf-8", { fatal: false });
+    let attributedBody = decoder.decode(attributedBodyBlob);
+
+    // Apply pattern matching similar to Python implementation
+    if (attributedBody.includes("NSNumber")) {
+      attributedBody = attributedBody.split("NSNumber")[0];
+    }
+    if (attributedBody.includes("NSString")) {
+      attributedBody = attributedBody.split("NSString")[1];
+    }
+    if (attributedBody.includes("NSDictionary")) {
+      attributedBody = attributedBody.split("NSDictionary")[0];
+    }
+
+    // Trim wrapper characters (first 6, last 12)
+    if (attributedBody.length > 18) {
+      attributedBody = attributedBody.slice(6, -12);
+    }
+
+    // Clean up whitespace and non-printable characters
+    return (
+      attributedBody
+        // deno-lint-ignore no-control-regex
+        .replace(/[\x00-\x1F\x7F-\x9F]/g, "") // Remove control characters
+        .replace(/\s+/g, " ") // Normalize whitespace
+        .trim()
+    );
+  } catch (error) {
+    console.warn("Failed to decode attributedBody:", error);
+    return "";
+  }
+};
+
 const getImessageDbPath = (): string => {
   return join(homedir(), "Library", "Messages", "chat.db");
 };
 
-export const openDatabase = (): Database => {
+export const openMessagesDatabase = (): Database => {
   const dbPath = getImessageDbPath();
   return new Database(dbPath, { readonly: true });
 };
@@ -41,8 +85,14 @@ export const searchMessages = (
   db: Database,
   options: SearchOptions = {},
 ): PaginatedResult<MessageWithHandle> => {
-  const { query, handle, startDate, endDate, limit = 100, offset = 0 } =
-    options;
+  const {
+    query,
+    handle,
+    startDate,
+    endDate,
+    limit = 100,
+    offset = 0,
+  } = options;
 
   let whereClause = "WHERE 1=1";
   const params: (string | number)[] = [];
@@ -58,13 +108,13 @@ export const searchMessages = (
   }
 
   if (startDate) {
-    const appleTimestamp = (startDate.getTime() / 1000) - 978307200;
+    const appleTimestamp = startDate.getTime() / 1000 - 978307200;
     whereClause += " AND m.date >= ?";
     params.push(appleTimestamp * 1000000000);
   }
 
   if (endDate) {
-    const appleTimestamp = (endDate.getTime() / 1000) - 978307200;
+    const appleTimestamp = endDate.getTime() / 1000 - 978307200;
     whereClause += " AND m.date <= ?";
     params.push(appleTimestamp * 1000000000);
   }
@@ -84,6 +134,7 @@ export const searchMessages = (
     SELECT 
       m.guid,
       m.text,
+      m.attributedBody,
       m.handle_id,
       m.service,
       m.date/1000000000 + 978307200 as date,
@@ -105,7 +156,22 @@ export const searchMessages = (
   `;
 
   const dataStmt = db.prepare(dataSql);
-  const data = dataStmt.all(...params, limit, offset) as MessageWithHandle[];
+  interface RawMessageRow extends MessageWithHandle {
+    attributedBody?: Uint8Array | null;
+  }
+  const rawData = dataStmt.all(...params, limit, offset) as RawMessageRow[];
+
+  // Process the data to handle attributedBody decoding
+  const data = rawData.map((row) => {
+    const { attributedBody, ...message } = row;
+
+    // If text is null/empty but attributedBody exists, decode it
+    if (!message.text && attributedBody) {
+      message.text = decodeAttributedBody(attributedBody);
+    }
+
+    return message;
+  });
 
   return {
     data,
@@ -212,6 +278,7 @@ export const getMessagesFromChat = (
     SELECT 
       m.guid,
       m.text,
+      m.attributedBody,
       m.handle_id,
       m.service,
       m.date/1000000000 + 978307200 as date,
@@ -236,7 +303,22 @@ export const getMessagesFromChat = (
   `;
 
   const dataStmt = db.prepare(dataSql);
-  const data = dataStmt.all(chatGuid, limit, offset) as MessageWithHandle[];
+  interface RawMessageRow extends MessageWithHandle {
+    attributedBody?: Uint8Array | null;
+  }
+  const rawData = dataStmt.all(chatGuid, limit, offset) as RawMessageRow[];
+
+  // Process the data to handle attributedBody decoding
+  const data = rawData.map((row) => {
+    const { attributedBody, ...message } = row;
+
+    // If text is null/empty but attributedBody exists, decode it
+    if (!message.text && attributedBody) {
+      message.text = decodeAttributedBody(attributedBody);
+    }
+
+    return message;
+  });
 
   return {
     data,

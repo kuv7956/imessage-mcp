@@ -8,59 +8,12 @@ import {
   getHandles,
   getMessagesFromChat,
   getRecentMessages,
-  openDatabase,
+  openMessagesDatabase,
   searchMessages,
-} from "./database.ts";
+} from "./messages.ts";
 import { searchContactsByName } from "./contacts.ts";
-import type { Database } from "@db/sqlite";
 import deno from "../deno.json" with { type: "json" };
-
-/**
- * Common Usage Workflows:
- *
- * 1. Find messages from a specific person:
- *    - search_contacts({ name: "John Smith" }) → get phone number
- *    - search_messages({ handle: "+15551234" }) → get messages
- *
- * 2. Get recent activity:
- *    - get_recent_messages({ limit: 20, offset: 0 }) → latest messages across all chats
- *
- * 3. Browse conversations:
- *    - get_chats({ limit: 10, offset: 0 }) → get chat GUIDs
- *    - get_messages_from_chat({ chatGuid: "...", limit: 50, offset: 0 }) → get specific chat messages
- *
- * 4. Search with time range:
- *    - search_messages({
- *        query: "meeting",
- *        startDate: "2025-08-04T00:00:00.000Z",
- *        endDate: "2025-08-05T00:00:00.000Z"
- *      })
- *
- * PAGINATION BEST PRACTICES:
- * All tools return paginated results with this structure:
- * {
- *   "data": [...],
- *   "pagination": {
- *     "total": 176,
- *     "limit": 100,
- *     "offset": 0,
- *     "hasMore": true,
- *     "page": 1,
- *     "totalPages": 2
- *   }
- * }
- *
- * CRITICAL: For analysis, summaries, or complete data needs:
- * 1. ALWAYS check the "hasMore" field in the response
- * 2. If hasMore is true, you MUST make additional requests with offset incremented by limit
- * 3. Continue until hasMore is false to ensure complete data
- * 4. Partial data will lead to incomplete/misleading analysis
- *
- * Example: To get ALL messages from last 24 hours (not just first 100):
- * - First call: search_messages({ startDate: "...", limit: 100, offset: 0 })
- * - If hasMore: true, second call: search_messages({ startDate: "...", limit: 100, offset: 100 })
- * - Continue until hasMore: false (this ensures you get all 176 messages, not just 100)
- */
+import { Database } from "@db/sqlite";
 
 const SearchMessagesSchema = z.object({
   query: z
@@ -162,12 +115,29 @@ const GetHandlesSchema = z.object({
 });
 
 const SearchContactsSchema = z.object({
-  name: z
+  firstName: z
     .string()
     .min(1)
     .describe(
-      "Contact name to search for (e.g., 'John Smith'). Returns phone numbers that can be used as the 'handle' parameter in 'search_messages'.",
+      "First name to search for (e.g., 'John'). Returns phone numbers that can be used as the 'handle' parameter in 'search_messages'.",
     ),
+  lastName: z
+    .string()
+    .optional()
+    .describe(
+      "Last name to search for (e.g., 'Smith'). Optional - if omitted, searches across all fields.",
+    ),
+  limit: z
+    .number()
+    .min(1)
+    .max(200)
+    .default(50)
+    .describe("Maximum number of contacts to return (1-200, default: 50)"),
+  offset: z
+    .number()
+    .min(0)
+    .default(0)
+    .describe("Number of contacts to skip for pagination (default: 0)"),
 });
 
 const createServer = () => {
@@ -184,7 +154,7 @@ const createServer = () => {
 
   const ensureDatabase = (): Database => {
     if (!db) {
-      db = openDatabase();
+      db = openMessagesDatabase();
     }
     return db;
   };
@@ -365,17 +335,22 @@ const createServer = () => {
 
   server.tool(
     "search_contacts",
-    "Search for contacts by name and retrieve their phone numbers. Use this FIRST when searching for messages from a specific person - it returns the phone number that can be used as the 'handle' parameter in 'search_messages'. Example: search for 'John Smith' to get his phone number, then use that phone number in search_messages.",
+    "Search for contacts by first name and optional last name. Use this FIRST when searching for messages from a specific person - it returns the phone number that can be used as the 'handle' parameter in 'search_messages'. Example: search for firstName='John' lastName='Smith' to get his phone number, then use that phone number in search_messages. If lastName is omitted, searches across all name fields. CRITICAL: Results are paginated - for complete contact search results, check 'hasMore' field and use 'offset' parameter until hasMore=false.",
     SearchContactsSchema.shape,
-    async (args) => {
+    (args) => {
       try {
-        const contacts = await searchContactsByName(args.name);
+        const result = searchContactsByName(
+          args.firstName,
+          args.lastName,
+          args.limit,
+          args.offset,
+        );
 
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(contacts, null, 2),
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
@@ -404,28 +379,16 @@ const main = async () => {
   // Attempt to access the database on startup to trigger security prompt
   try {
     console.error("Attempting to access iMessage database...");
-    const db = openDatabase();
+    const messages = openMessagesDatabase();
 
     // Perform a simple query to ensure actual database access
-    const testQuery = db.prepare(
-      "SELECT COUNT(*) as count FROM message LIMIT 1",
-    );
-    const result = testQuery.get() as { count: number };
+    const handles = getHandles(messages);
     console.error(
-      `Database access successful. Found ${result.count} messages.`,
-    );
-
-    // Test handle table access for contacts functionality
-    const handleQuery = db.prepare(
-      "SELECT COUNT(*) as count FROM handle LIMIT 1",
-    );
-    const handleResult = handleQuery.get() as { count: number };
-    console.error(
-      `Handle table access successful. Found ${handleResult.count} handles.`,
+      `Database access successful. Found ${handles.data.length} handles.`,
     );
 
     // Close the initial connection as it will be reopened lazily when needed
-    db.close();
+    messages.close();
   } catch (error) {
     console.error(
       "Database access failed:",
@@ -439,9 +402,9 @@ const main = async () => {
   // Test contacts functionality on startup
   try {
     console.error("Testing contacts database integration...");
-    const testContacts = await searchContactsByName("test");
+    const testContacts = searchContactsByName("test", undefined);
     console.error(
-      `Contacts integration successful. Search test returned ${testContacts.length} results.`,
+      `Contacts integration successful. Search test returned ${testContacts.data.length} results.`,
     );
   } catch (error) {
     console.error(

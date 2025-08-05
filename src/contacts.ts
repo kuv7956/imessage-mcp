@@ -1,71 +1,102 @@
+import { Database } from "@db/sqlite";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import type { PaginatedResult } from "./types.ts";
+
 export interface ContactInfo {
   name: string;
   phone: string;
 }
 
+interface Contact {
+  id: number;
+  firstName: string | undefined;
+  lastName: string | undefined;
+  organization: string | undefined;
+  fullName: string;
+  phoneNumbers: string[];
+  emailAddresses: string[];
+}
+
+interface ContactRow {
+  id: number;
+  firstName: string | null;
+  lastName: string | null;
+  organization: string | null;
+}
+
+interface PhoneRow {
+  ZFULLNUMBER: string | null;
+}
+
+interface EmailRow {
+  ZADDRESS: string | null;
+}
+
 /**
- * Search for contacts by name using AppleScript and return phone numbers as handles
+ * Search for contacts by name using AddressBook database and return phone numbers as handles
  */
-export async function searchContactsByName(
-  searchTerm: string,
-): Promise<ContactInfo[]> {
-  const script = `
-    tell application "Contacts"
-      set matchingContacts to {}
-      set allPeople to every person
-      repeat with currentPerson in allPeople
-        set personName to name of currentPerson
-        if personName contains "${searchTerm}" then
-          try
-            set phoneList to value of phones of currentPerson
-            if (count phoneList) > 0 then
-              set firstPhone to item 1 of phoneList as string
-              set contactLine to personName & "###" & firstPhone
-              set end of matchingContacts to contactLine
-            end if
-          end try
-        end if
-      end repeat
-      set AppleScript's text item delimiters to "%%%"
-      set resultString to matchingContacts as string
-      set AppleScript's text item delimiters to ""
-      return resultString
-    end tell
-  `;
-
+export function searchContactsByName(
+  firstName: string,
+  lastName: string | undefined,
+  limit = 50,
+  offset = 0,
+): PaginatedResult<ContactInfo> {
   try {
-    const process = new Deno.Command("osascript", {
-      args: ["-e", script],
-      stdout: "piped",
-      stderr: "piped",
-    });
+    // First get all contacts matching the search term to count total results
+    const allContacts = searchContactsInAddressBook(
+      firstName,
+      lastName,
+      1000,
+      0,
+    );
 
-    const { code, stdout, stderr } = await process.output();
+    // Transform AddressBook contacts to ContactInfo format
+    const allContactInfos: ContactInfo[] = [];
 
-    if (code !== 0) {
-      const errorText = new TextDecoder().decode(stderr);
-      throw new Error(`AppleScript error: ${errorText}`);
+    for (const contact of allContacts) {
+      // Add entries for each phone number
+      for (const phone of contact.phoneNumbers) {
+        const normalizedPhone = normalizePhoneNumber(phone);
+        if (normalizedPhone) {
+          allContactInfos.push({
+            name: contact.fullName,
+            phone: normalizedPhone,
+          });
+        }
+      }
+
+      // Also add email addresses as they can be iMessage handles
+      for (const email of contact.emailAddresses) {
+        if (email) {
+          allContactInfos.push({
+            name: contact.fullName,
+            phone: email,
+          });
+        }
+      }
     }
 
-    const output = new TextDecoder().decode(stdout).trim();
+    // Calculate pagination metadata
+    const total = allContactInfos.length;
+    const hasMore = offset + limit < total;
+    const page = Math.floor(offset / limit) + 1;
+    const totalPages = Math.ceil(total / limit);
 
-    if (!output) {
-      return [];
-    }
+    // Apply pagination
+    const paginatedData = allContactInfos.slice(offset, offset + limit);
 
-    // Parse the output using the custom delimiters
-    const contacts = output.split("%%%").filter((contact) => contact.trim())
-      .map((contact) => {
-        const [name, phone] = contact.split("###");
-        const normalizedPhone = normalizePhoneNumber(phone?.trim() || "");
-
-        return {
-          name: name?.trim() || "No name",
-          phone: normalizedPhone,
-        };
-      });
-
-    return contacts;
+    return {
+      data: paginatedData,
+      pagination: {
+        total,
+        limit,
+        offset,
+        hasMore,
+        page,
+        totalPages,
+      },
+    };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to search contacts: ${errorMessage}`);
@@ -96,4 +127,182 @@ function normalizePhoneNumber(phone: string): string {
 
   // Otherwise return as is
   return cleaned || phone;
+}
+
+function searchContactsInAddressBook(
+  firstName: string,
+  lastName: string | undefined,
+  limit = 20,
+  offset = 0,
+): Contact[] {
+  const contacts: Contact[] = [];
+  const addressBookBasePath = join(
+    homedir(),
+    "Library",
+    "Application Support",
+    "AddressBook",
+    "Sources",
+  );
+
+  try {
+    // Find all AddressBook database files
+    const sourcesDirs = [];
+    for (const entry of Deno.readDirSync(addressBookBasePath)) {
+      if (entry.isDirectory) {
+        sourcesDirs.push(entry.name);
+      }
+    }
+
+    // Search in each AddressBook database
+    for (const sourceDir of sourcesDirs) {
+      const dbPath = join(
+        addressBookBasePath,
+        sourceDir,
+        "AddressBook-v22.abcddb",
+      );
+
+      try {
+        if (!Deno.statSync(dbPath).isFile) {
+          continue;
+        }
+      } catch {
+        // Database file doesn't exist
+        continue;
+      }
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        // Query for contacts matching the search term
+        let contactRows: unknown[];
+
+        if (firstName === "" && !lastName) {
+          // If search is empty, return all contacts
+          const query = `
+            SELECT DISTINCT
+              r.Z_PK as id,
+              r.ZFIRSTNAME as firstName,
+              r.ZLASTNAME as lastName,
+              r.ZORGANIZATION as organization
+            FROM ZABCDRECORD r
+            WHERE (r.ZFIRSTNAME IS NOT NULL OR r.ZLASTNAME IS NOT NULL OR r.ZORGANIZATION IS NOT NULL)
+            ORDER BY r.ZLASTNAME, r.ZFIRSTNAME
+          `;
+          contactRows = db.prepare(query).all();
+        } else if (lastName) {
+          // Search for both first and last name
+          const firstNamePattern = `%${firstName}%`;
+          const lastNamePattern = `%${lastName}%`;
+          const query = `
+            SELECT DISTINCT
+              r.Z_PK as id,
+              r.ZFIRSTNAME as firstName,
+              r.ZLASTNAME as lastName,
+              r.ZORGANIZATION as organization
+            FROM ZABCDRECORD r
+            WHERE (
+              r.ZFIRSTNAME LIKE ? AND r.ZLASTNAME LIKE ?
+            )
+            AND (r.ZFIRSTNAME IS NOT NULL OR r.ZLASTNAME IS NOT NULL OR r.ZORGANIZATION IS NOT NULL)
+            ORDER BY r.ZLASTNAME, r.ZFIRSTNAME
+          `;
+          contactRows = db
+            .prepare(query)
+            .all(firstNamePattern, lastNamePattern);
+        } else {
+          // Search only by first name (also check last name, organization, and nickname)
+          const searchPattern = `%${firstName}%`;
+          const query = `
+            SELECT DISTINCT
+              r.Z_PK as id,
+              r.ZFIRSTNAME as firstName,
+              r.ZLASTNAME as lastName,
+              r.ZORGANIZATION as organization
+            FROM ZABCDRECORD r
+            WHERE (
+              r.ZFIRSTNAME LIKE ? OR
+              r.ZLASTNAME LIKE ? OR
+              r.ZORGANIZATION LIKE ? OR
+              r.ZNICKNAME LIKE ?
+            )
+            AND (r.ZFIRSTNAME IS NOT NULL OR r.ZLASTNAME IS NOT NULL OR r.ZORGANIZATION IS NOT NULL)
+            ORDER BY r.ZLASTNAME, r.ZFIRSTNAME
+          `;
+          contactRows = db
+            .prepare(query)
+            .all(searchPattern, searchPattern, searchPattern, searchPattern);
+        }
+
+        for (const row of contactRows) {
+          const contactRow = row as ContactRow;
+          if (!contactRow.id) continue; // Skip contacts without valid ID
+
+          const contact: Contact = {
+            id: contactRow.id,
+            firstName: contactRow.firstName ?? undefined,
+            lastName: contactRow.lastName ?? undefined,
+            organization: contactRow.organization ?? undefined,
+            fullName: "",
+            phoneNumbers: [],
+            emailAddresses: [],
+          };
+
+          // Build full name
+          const nameParts = [];
+          if (contact.firstName) nameParts.push(contact.firstName);
+          if (contact.lastName) nameParts.push(contact.lastName);
+          if (nameParts.length === 0 && contact.organization) {
+            nameParts.push(contact.organization);
+          }
+          contact.fullName = nameParts.join(" ") || "Unknown";
+
+          // Get phone numbers
+          const phoneQuery = `
+            SELECT ZFULLNUMBER
+            FROM ZABCDPHONENUMBER
+            WHERE ZOWNER = ?
+            ORDER BY ZORDERINGINDEX
+          `;
+          const phoneRows = db
+            .prepare(phoneQuery)
+            .all(contact.id) as PhoneRow[];
+          contact.phoneNumbers = phoneRows
+            .map((r) => r.ZFULLNUMBER)
+            .filter((phone): phone is string => phone != null);
+
+          // Get email addresses
+          const emailQuery = `
+            SELECT ZADDRESS
+            FROM ZABCDEMAILADDRESS
+            WHERE ZOWNER = ?
+            ORDER BY ZORDERINGINDEX
+          `;
+          const emailRows = db
+            .prepare(emailQuery)
+            .all(contact.id) as EmailRow[];
+          contact.emailAddresses = emailRows
+            .map((r) => r.ZADDRESS)
+            .filter((email): email is string => email != null);
+
+          contacts.push(contact);
+        }
+      } finally {
+        db.close();
+      }
+    }
+
+    // Remove duplicates and apply pagination
+    const uniqueContacts = Array.from(
+      new Map(
+        contacts.map((c) => [
+          `${c.firstName}-${c.lastName}-${c.organization}`,
+          c,
+        ]),
+      ).values(),
+    );
+
+    return uniqueContacts.slice(offset, offset + limit);
+  } catch (error) {
+    console.error("Error searching AddressBook:", error);
+    return [];
+  }
 }
