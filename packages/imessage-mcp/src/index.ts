@@ -140,6 +140,111 @@ const SearchContactsSchema = z.object({
     .describe("Number of contacts to skip for pagination (default: 0)"),
 });
 
+const LookupContactByHandleSchema = z.object({
+  handle: z
+    .string()
+    .min(1)
+    .describe(
+      "Phone number (e.g., '+15551234567') or email address to lookup contact name for.",
+    ),
+});
+
+const lookupContactByHandle = (contactsDatabases: any[], handle: string) => {
+  for (const db of contactsDatabases) {
+    const phoneQuery = db.prepare(`
+      SELECT DISTINCT 
+        r.ZFIRSTNAME as firstName,
+        r.ZLASTNAME as lastName,
+        r.ZORGANIZATION as organization,
+        (CASE 
+          WHEN r.ZFIRSTNAME IS NOT NULL AND r.ZLASTNAME IS NOT NULL 
+          THEN r.ZFIRSTNAME || ' ' || r.ZLASTNAME
+          WHEN r.ZFIRSTNAME IS NOT NULL 
+          THEN r.ZFIRSTNAME
+          WHEN r.ZLASTNAME IS NOT NULL 
+          THEN r.ZLASTNAME
+          WHEN r.ZORGANIZATION IS NOT NULL 
+          THEN r.ZORGANIZATION
+          ELSE 'Unknown Contact'
+        END) as displayName
+      FROM ZABCDRECORD r
+      JOIN ZABCDPHONENUMBER p ON r.Z_PK = p.ZOWNER
+      WHERE p.ZFULLNUMBER = ?
+      LIMIT 1
+    `);
+    
+    let result = phoneQuery.get(handle);
+    phoneQuery.finalize();
+    
+    if (!result && handle.includes('@')) {
+      const emailQuery = db.prepare(`
+        SELECT DISTINCT 
+          r.ZFIRSTNAME as firstName,
+          r.ZLASTNAME as lastName,
+          r.ZORGANIZATION as organization,
+          (CASE 
+            WHEN r.ZFIRSTNAME IS NOT NULL AND r.ZLASTNAME IS NOT NULL 
+            THEN r.ZFIRSTNAME || ' ' || r.ZLASTNAME
+            WHEN r.ZFIRSTNAME IS NOT NULL 
+            THEN r.ZFIRSTNAME
+            WHEN r.ZLASTNAME IS NOT NULL 
+            THEN r.ZLASTNAME
+            WHEN r.ZORGANIZATION IS NOT NULL 
+            THEN r.ZORGANIZATION
+            ELSE 'Unknown Contact'
+          END) as displayName
+        FROM ZABCDRECORD r
+        JOIN ZABCDEMAILADDRESS e ON r.Z_PK = e.ZOWNER
+        WHERE e.ZADDRESS = ?
+        LIMIT 1
+      `);
+      
+      result = emailQuery.get(handle);
+      emailQuery.finalize();
+    }
+    
+    if (result) {
+      return {
+        data: [{
+          handle: handle,
+          firstName: result.firstName || null,
+          lastName: result.lastName || null,
+          organization: result.organization || null,
+          displayName: result.displayName,
+          found: true
+        }],
+        pagination: {
+          total: 1,
+          limit: 1,
+          offset: 0,
+          hasMore: false,
+          page: 1,
+          totalPages: 1
+        }
+      };
+    }
+  }
+  
+  return {
+    data: [{
+      handle: handle,
+      firstName: null,
+      lastName: null,
+      organization: null,
+      displayName: null,
+      found: false
+    }],
+    pagination: {
+      total: 0,
+      limit: 1,
+      offset: 0,
+      hasMore: false,
+      page: 1,
+      totalPages: 0
+    }
+  };
+};
+
 const createServer = () => {
   const server = new McpServer({
     name: "imessage",
@@ -155,7 +260,7 @@ const createServer = () => {
 
   server.tool(
     "search_messages",
-    "Search iMessage messages with various filters. Use 'search_contacts' first to get handle IDs for specific contacts. Handle parameter accepts phone numbers like '+15551234' or email addresses, NOT contact names. CRITICAL: Results are paginated - for summaries, analysis, or complete conversation history, you MUST paginate through ALL results by checking 'hasMore' field and using 'offset' parameter until hasMore=false. Partial data will lead to incomplete analysis.",
+    "Search iMessage messages with various filters. Handle parameter accepts phone numbers ('+15551234'), email addresses, or contact names - the format depends on your system configuration. Use 'lookup_contact_by_handle' to identify unknown handles or 'search_contacts' to find handles by name. CRITICAL: Results are paginated - for summaries, analysis, or complete conversation history, you MUST paginate through ALL results by checking 'hasMore' field and using 'offset' parameter until hasMore=false. Partial data will lead to incomplete analysis.",
     SearchMessagesSchema.shape,
     (args) => {
       try {
@@ -328,7 +433,7 @@ const createServer = () => {
 
   server.tool(
     "search_contacts",
-    "Search for contacts by first name and optional last name. Use this FIRST when searching for messages from a specific person - it returns the phone number that can be used as the 'handle' parameter in 'search_messages'. Example: search for firstName='John' lastName='Smith' to get his phone number, then use that phone number in search_messages. If lastName is omitted, searches across all name fields. CRITICAL: Results are paginated - for complete contact search results, check 'hasMore' field and use 'offset' parameter until hasMore=false.",
+    "Search for contacts by first name and optional last name. Use this FIRST when searching for messages from a specific person - it returns the phone number that can be used as the 'handle' parameter in 'search_messages'. Example: search for firstName='John' lastName='Smith' to get his phone number, then use that phone number in search_messages. If lastName is omitted, searches across all fields. CRITICAL: Results are paginated - for complete contact search results, check 'hasMore' field and use 'offset' parameter until hasMore=false.",
     SearchContactsSchema.shape,
     (args) => {
       try {
@@ -354,6 +459,37 @@ const createServer = () => {
             {
               type: "text",
               text: `Error searching contacts: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.tool(
+    "lookup_contact_by_handle",
+    "Lookup contact name and details by phone number or email address. This is the reverse of 'search_contacts' - instead of searching by name to get phone numbers, this searches by phone number/email to get the contact name. Useful for identifying who sent messages when you have their handle but not their name.",
+    LookupContactByHandleSchema.shape,
+    (args) => {
+      try {
+        const result = lookupContactByHandle(contactsDatabases, args.handle);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error looking up contact: ${
                 error instanceof Error ? error.message : String(error)
               }`,
             },
@@ -402,8 +538,13 @@ const main = async () => {
       "test",
       undefined,
     );
+    const testHandlePhone = lookupContactByHandle(contactsDatabases, "test");
+    const testHandleEmail = lookupContactByHandle(contactsDatabases, "test");
     console.error(
-      `Contacts integration successful. Search test returned ${testContacts.data.length} results.`,
+      `Search test returned ${testContacts.data.length} results.`,
+      `Reverse phone search test returned ${testHandlePhone.data.length} results.`,
+      `Reverse email search test returned ${testHandleEmail.data.length} results.`,
+      `A succesful test finds exactly one empty object for each test.`
     );
     // Close test databases
     for (const db of contactsDatabases) {
